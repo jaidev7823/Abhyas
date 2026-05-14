@@ -4,7 +4,7 @@ An AI-powered pipeline to analyze speech for clarity, tone, and "executive prese
 
 ## Project Structure
 Ensure your models folder is structured exactly as follows:
-
+```text
 .
 ├── main.py
 ├── video.mp4
@@ -15,8 +15,7 @@ Ensure your models folder is structured exactly as follows:
         ├── hyperparams.yaml
         ├── model.ckpt
         └── label_encoder.txt
-
----
+```
 
 ## Cross-Platform Setup Guide
 
