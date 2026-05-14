@@ -1,0 +1,15 @@
+# Core AI Models
+faster-whisper
+speechbrain
+transformers
+ollama
+
+# Audio & Math
+librosa
+numpy
+torch
+torchaudio
+
+# Environment
+python-dotenv
+
