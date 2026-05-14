@@ -5,7 +5,7 @@ An AI-powered pipeline to analyze speech for clarity, tone, and "executive prese
 ## Project Structure
 Ensure your models folder is structured exactly as follows:
 ```text
-.
+
 ├── main.py
 ├── video.mp4
 └── models/
