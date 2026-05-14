@@ -1,0 +1,7 @@
+venv
+.git
+models
+temp_audio.wav
+video.mp4
+review_report.txt
+transcript.txt
