@@ -4,4 +4,6 @@ models
 temp_audio.wav
 video.mp4
 review_report.txt
+wav2vec2_checkpoints
 transcript.txt
+review*/
