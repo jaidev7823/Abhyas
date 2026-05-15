@@ -13,8 +13,17 @@ class PauseRegion(BaseModel):
     end: float
 
 
+class SentenceSegment(BaseModel):
+    id: int
+    index: int
+    text: str
+    start: float
+    end: float
+
+
 class ReferenceResponse(BaseModel):
     words: List[WordSchema]
+    sentences: List[SentenceSegment] = []
     times: List[float]
     rms: List[float]
     pitch: List[float]

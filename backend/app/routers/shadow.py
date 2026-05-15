@@ -1,11 +1,12 @@
 import os
 import shutil
 import uuid
+from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
 from app.services.feature_service import extract_features
-from app.services.whisper_service import transcribe_words
+from app.services.whisper_service import transcribe_audio
 from app.services.scoring_service import calculate_score
 
 router = APIRouter()
@@ -38,10 +39,10 @@ async def analyze_master(audio: UploadFile = File(...)):
     path = save_upload(audio)
     try:
         features = extract_features(path)
-        words = transcribe_words(path)
-        print(words)
+        transcription = transcribe_audio(path)
         return {
-            "words": words,
+            "words": transcription["words"],
+            "sentences": transcription["sentences"],
             "times": features["times"],
             "rms": features["rms"],
             "pitch": features["pitch"],
@@ -61,11 +62,16 @@ async def analyze_master(audio: UploadFile = File(...)):
 async def compare_attempt(
     master_audio: UploadFile = File(...),
     user_audio: UploadFile = File(...),
+    master_start: float = Form(0.0),
+    master_end: Optional[float] = Form(None),
 ):
     master_path = save_upload(master_audio)
     user_path = save_upload(user_audio)
     try:
-        m_feat = extract_features(master_path)
+        master_duration = None
+        if master_end is not None and master_end > master_start:
+            master_duration = master_end - master_start
+        m_feat = extract_features(master_path, offset=master_start, duration=master_duration)
         u_feat = extract_features(user_path)
         score = calculate_score(m_feat, u_feat)
         return {

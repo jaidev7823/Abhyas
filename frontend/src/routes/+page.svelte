@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { ComparisonResponse, ReferenceData, ScoreData } from '$lib/types';
+	import type { ComparisonResponse, ReferenceData, ScoreData, SentenceSegment } from '$lib/types';
 	import UploadZone from '$lib/components/UploadZone.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
 	import ScoreCard from '$lib/components/ScoreCard.svelte';
@@ -21,12 +21,33 @@
 	let rafId = $state(0);
 	let masterMuted = $state(false);
 	let masterVolume = $state(0.75);
+	let selectedSentenceIds = $state<number[]>([]);
 
 	let isRecording = $state(false);
 	let recordedBlob = $state<Blob | null>(null);
 	let recordedUrl = $state<string | null>(null);
 	let mediaRecorder = $state<MediaRecorder | null>(null);
 	let recordingStopTimer = $state<number | null>(null);
+
+	let sentences = $derived(reference?.sentences ?? []);
+	let selectedSentences = $derived.by(() => {
+		if (!reference || selectedSentenceIds.length === 0) return [];
+		const selected = new Set(selectedSentenceIds);
+		return sentences.filter((sentence) => selected.has(sentence.id));
+	});
+	let practiceRange = $derived.by(() => {
+		if (!reference || selectedSentences.length === 0) {
+			return { start: 0, end: reference?.duration ?? 0 };
+		}
+		return {
+			start: Math.min(...selectedSentences.map((sentence) => sentence.start)),
+			end: Math.max(...selectedSentences.map((sentence) => sentence.end)),
+		};
+	});
+	let activeReference = $derived.by(() => {
+		if (!reference) return null;
+		return sliceReference(reference, practiceRange.start, practiceRange.end);
+	});
 
 	function getRecorderOptions(): MediaRecorderOptions {
 		const preferredTypes = [
@@ -39,6 +60,75 @@
 			...(mimeType ? { mimeType } : {}),
 			audioBitsPerSecond: 128000,
 		};
+	}
+
+	function sliceReference(data: ReferenceData, start: number, end: number): ReferenceData {
+		const duration = Math.max(0.1, end - start);
+		const inRange = (time: number) => time >= start && time <= end;
+		const frameIndexes = data.times
+			.map((time, index) => ({ time, index }))
+			.filter(({ time }) => inRange(time));
+		const fallbackIndex = data.times.reduce((bestIndex, time, index) => {
+			return Math.abs(time - start) < Math.abs(data.times[bestIndex] - start) ? index : bestIndex;
+		}, 0);
+		const indexes = frameIndexes.length > 0 ? frameIndexes.map(({ index }) => index) : [fallbackIndex];
+
+		return {
+			...data,
+			words: data.words
+				.filter((word) => word.end >= start && word.start <= end)
+				.map((word) => ({
+					...word,
+					start: Math.max(0, word.start - start),
+					end: Math.min(duration, word.end - start),
+				})),
+			sentences: data.sentences
+				?.filter((sentence) => sentence.end >= start && sentence.start <= end)
+				.map((sentence) => ({
+					...sentence,
+					start: Math.max(0, sentence.start - start),
+					end: Math.min(duration, sentence.end - start),
+				})),
+			times: indexes.map((index) => Math.max(0, data.times[index] - start)),
+			rms: indexes.map((index) => data.rms[index]),
+			pitch: indexes.map((index) => data.pitch[index]),
+			pause_mask: indexes.map((index) => data.pause_mask[index]),
+			pause_regions: data.pause_regions
+				.filter((region) => region.end >= start && region.start <= end)
+				.map((region) => ({
+					start: Math.max(0, region.start - start),
+					end: Math.min(duration, region.end - start),
+				})),
+			cps: indexes.map((index) => data.cps[index]),
+			duration,
+		};
+	}
+
+	function clearAttempt() {
+		recordedBlob = null;
+		if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+		recordedUrl = null;
+		score = null;
+		attemptReference = null;
+	}
+
+	function setPracticeSelection(ids: number[]) {
+		pause();
+		selectedSentenceIds = [...new Set(ids)].sort((a, b) => a - b);
+		clearAttempt();
+		seek(0);
+	}
+
+	function selectSentence(id: number) {
+		setPracticeSelection([id]);
+	}
+
+	function toggleSentence(sentence: SentenceSegment) {
+		if (selectedSentenceIds.includes(sentence.id)) {
+			setPracticeSelection(selectedSentenceIds.filter((id) => id !== sentence.id));
+			return;
+		}
+		setPracticeSelection([...selectedSentenceIds, sentence.id]);
 	}
 
 	function onMasterFile(file: File) {
@@ -74,7 +164,7 @@
 		el.muted = masterMuted;
 		el.onended = () => {
 			isPlaying = false;
-			currentTime = reference?.duration ?? el.currentTime;
+			currentTime = activeReference?.duration ?? 0;
 			if (rafId) cancelAnimationFrame(rafId);
 		};
 		audioEl = el;
@@ -83,7 +173,14 @@
 	function startPlaybackLoop() {
 		if (rafId) cancelAnimationFrame(rafId);
 		function tick() {
-			if (audioEl) currentTime = audioEl.currentTime;
+			if (audioEl) {
+				if (audioEl.currentTime >= practiceRange.end) {
+					pause();
+					currentTime = activeReference?.duration ?? 0;
+					return;
+				}
+				currentTime = Math.max(0, audioEl.currentTime - practiceRange.start);
+			}
 			if (audioEl && !audioEl.paused) rafId = requestAnimationFrame(tick);
 		}
 		rafId = requestAnimationFrame(tick);
@@ -91,6 +188,10 @@
 
 	async function play() {
 		if (!audioEl) return;
+		if (audioEl.currentTime < practiceRange.start || audioEl.currentTime >= practiceRange.end) {
+			audioEl.currentTime = practiceRange.start;
+			currentTime = 0;
+		}
 		await audioEl.play();
 		isPlaying = true;
 		startPlaybackLoop();
@@ -104,7 +205,7 @@
 
 	function seek(t: number) {
 		if (audioEl) {
-			audioEl.currentTime = t;
+			audioEl.currentTime = practiceRange.start + t;
 			currentTime = t;
 		}
 	}
@@ -137,6 +238,7 @@
 				timeout: 120000,
 			});
 			reference = res.data;
+			selectedSentenceIds = res.data.sentences?.[0] ? [res.data.sentences[0].id] : [];
 			attemptReference = null;
 			step = 'analyzed';
 			setupAudio(masterUrl!);
@@ -149,7 +251,7 @@
 	}
 
 	async function startRecording() {
-		if (!reference) return;
+		if (!activeReference) return;
 		let stream: MediaStream | null = null;
 		let recorder: MediaRecorder | null = null;
 		try {
@@ -197,7 +299,7 @@
 				if (activeRecorder.state === 'recording') {
 					stopRecording();
 				}
-			}, reference.duration * 1000 + 500);
+			}, activeReference.duration * 1000 + 500);
 		} catch (e: any) {
 			isRecording = false;
 			pause();
@@ -216,12 +318,14 @@
 	}
 
 	async function compare() {
-		if (!masterFile || !recordedBlob || !reference) return;
+		if (!masterFile || !recordedBlob || !activeReference) return;
 		loading = true;
 		error = null;
 		try {
 			const formData = new FormData();
 			formData.append('master_audio', masterFile);
+			formData.append('master_start', String(practiceRange.start));
+			formData.append('master_end', String(practiceRange.end));
 			const ext = recordedBlob.type.includes('ogg') ? 'ogg' : 'webm';
 			formData.append('user_audio', recordedBlob, `recording.${ext}`);
 			const res = await api.post('/shadow/compare-attempt', formData, {
@@ -308,14 +412,49 @@
 		</section>
 
 		<!-- Step 2: Blueprint + Playback -->
-		{#if reference}
+		{#if reference && activeReference}
 			<section class="section">
 				<h2 class="section-label">
 					<span class="step-num">2</span>
 					Speaking Blueprint
 				</h2>
+				{#if sentences.length > 0}
+					<div class="practice-picker">
+						<div class="picker-row">
+							<label class="picker-label" for="sentence-select">Practice sentence</label>
+							<select
+								id="sentence-select"
+								class="sentence-select"
+								value={selectedSentenceIds[0] ?? ''}
+								onchange={(e) => selectSentence(Number((e.currentTarget as HTMLSelectElement).value))}
+							>
+								{#each sentences as sentence}
+									<option value={sentence.id}>
+										{sentence.index + 1}. {sentence.text}
+									</option>
+								{/each}
+							</select>
+						</div>
+						<div class="sentence-checklist" aria-label="Select multiple sentences">
+							{#each sentences as sentence}
+								<label class="sentence-chip" class:checked={selectedSentenceIds.includes(sentence.id)}>
+									<input
+										type="checkbox"
+										checked={selectedSentenceIds.includes(sentence.id)}
+										onchange={() => toggleSentence(sentence)}
+									/>
+									<span>{sentence.index + 1}</span>
+								</label>
+							{/each}
+						</div>
+						<p class="hint">
+							Practicing {selectedSentences.length || sentences.length} sentence{(selectedSentences.length || sentences.length) === 1 ? '' : 's'}
+							({practiceRange.start.toFixed(1)}s-{practiceRange.end.toFixed(1)}s)
+						</p>
+					</div>
+				{/if}
 				<Timeline
-					{reference}
+					reference={activeReference}
 					comparisonReference={attemptReference}
 					{currentTime}
 					{isPlaying}
@@ -343,7 +482,7 @@
 							</svg>
 							Start Recording
 						</button>
-						<p class="hint">Max {reference.duration.toFixed(0)} seconds</p>
+						<p class="hint">Max {activeReference.duration.toFixed(0)} seconds</p>
 					{/if}
 
 					{#if isRecording}
@@ -505,6 +644,77 @@
 	.analyze-row {
 		display: flex;
 		gap: 12px;
+	}
+
+	.practice-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin-bottom: 16px;
+		padding: 12px;
+		background: #1f1f1f;
+		border: 1px solid #2a2a2a;
+		border-radius: 8px;
+	}
+
+	.picker-row {
+		display: grid;
+		grid-template-columns: 140px 1fr;
+		gap: 12px;
+		align-items: center;
+	}
+
+	.picker-label {
+		color: #888;
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.sentence-select {
+		width: 100%;
+		min-width: 0;
+		background: #151515;
+		border: 1px solid #3a3a3a;
+		border-radius: 7px;
+		color: #ddd;
+		font-size: 13px;
+		padding: 8px 10px;
+	}
+
+	.sentence-checklist {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.sentence-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 38px;
+		height: 30px;
+		justify-content: center;
+		background: #151515;
+		border: 1px solid #3a3a3a;
+		border-radius: 7px;
+		color: #888;
+		cursor: pointer;
+		font-size: 12px;
+		font-weight: 600;
+		padding: 0 8px;
+	}
+
+	.sentence-chip.checked {
+		border-color: #4fc3f7;
+		color: #e0e0e0;
+		background: rgba(79, 195, 247, 0.12);
+	}
+
+	.sentence-chip input {
+		margin: 0;
+		accent-color: #4fc3f7;
 	}
 
 	.btn {

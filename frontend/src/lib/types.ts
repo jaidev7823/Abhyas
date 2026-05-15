@@ -9,8 +9,17 @@ export interface PauseRegion {
 	end: number;
 }
 
+export interface SentenceSegment {
+	id: number;
+	index: number;
+	text: string;
+	start: number;
+	end: number;
+}
+
 export interface ReferenceData {
 	words: Word[];
+	sentences?: SentenceSegment[];
 	times: number[];
 	rms: number[];
 	pitch: number[];

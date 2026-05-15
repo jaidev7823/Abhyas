@@ -30,8 +30,8 @@ def smooth_signal(signal, window_size=15):
     )
 
 
-def extract_features(audio_path):
-    y, sr = librosa.load(audio_path, sr=TARGET_SR)
+def extract_features(audio_path, offset=0.0, duration=None):
+    y, sr = librosa.load(audio_path, sr=TARGET_SR, offset=offset, duration=duration)
 
     hop_length = 256
     rms = librosa.feature.rms(
