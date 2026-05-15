@@ -17,7 +17,7 @@
 		onSeek: (t: number) => void;
 	} = $props();
 
-	const PX_PER_SEC = 110;
+	const PX_PER_SEC = 180;
 	const LEFT_MARGIN = 55;
 	const SVG_HEIGHT = 270;
 	const WORD_HEIGHT = 48;
