@@ -13,3 +13,10 @@ torchaudio
 # Environment
 python-dotenv
 
+fastapi
+uvicorn
+python-multipart
+matplotlib
+scipy
+scikit-learn
+soundfile
