@@ -46,6 +46,7 @@
 
 	let containerEl: HTMLDivElement | undefined = $state();
 	let containerWidth = $state(0);
+	let comparisonMode: 'stacked' | 'overlap' = $state('stacked');
 
 	$effect(() => {
 		if (!containerEl) return;
@@ -60,7 +61,7 @@
 	let contentWidth = $derived(Math.max(500, maxDuration * PX_PER_SEC));
 	let svgWidth = $derived(contentWidth + LEFT_MARGIN);
 	let renderWidth = $derived(Math.max(containerWidth || 0, svgWidth));
-	let svgHeight = $derived(comparisonReference ? COMP_TOP + COMP_HEIGHT : MASTER_HEIGHT);
+	let svgHeight = $derived(comparisonReference && comparisonMode === 'stacked' ? COMP_TOP + COMP_HEIGHT : MASTER_HEIGHT);
 
 	let currentWordIdx = $derived(
 		reference.words.findIndex((w) => currentTime >= w.start && currentTime < w.end)
@@ -133,6 +134,32 @@
 		const firstX = LEFT_MARGIN;
 		const lastX = LEFT_MARGIN + comparisonReference.duration * PX_PER_SEC;
 		return `M${firstX.toFixed(1)},${COMP_VOL_BOTTOM}L${comparisonVolLinePoints}L${lastX.toFixed(1)},${COMP_VOL_BOTTOM}Z`;
+	});
+
+	let overlayPitchPoints = $derived.by(() => {
+		if (!comparisonReference) return '';
+		return comparisonReference.times
+			.map((t, i) => {
+				const x = LEFT_MARGIN + t * PX_PER_SEC;
+				const p = comparisonReference.pitch[i];
+				const norm = maxPitch > 0 ? p / maxPitch : 0;
+				const y = PITCH_BOTTOM - norm * (PITCH_BOTTOM - PITCH_TOP);
+				return `${x.toFixed(1)},${y.toFixed(1)}`;
+			})
+			.join(' ');
+	});
+
+	let overlayVolLinePoints = $derived.by(() => {
+		if (!comparisonReference) return '';
+		return comparisonReference.times
+			.map((t, i) => {
+				const x = LEFT_MARGIN + t * PX_PER_SEC;
+				const r = comparisonReference.rms[i];
+				const norm = maxRms > 0 ? r / maxRms : 0;
+				const y = VOL_BOTTOM - norm * (VOL_BOTTOM - VOL_TOP);
+				return `${x.toFixed(1)},${y.toFixed(1)}`;
+			})
+			.join(' ');
 	});
 
 	let currentWord = $derived(currentWordIdx >= 0 ? reference.words[currentWordIdx] : null);
@@ -215,6 +242,24 @@
 			aria-label="Master audio volume"
 			oninput={(e) => onVolumeChange(Number((e.currentTarget as HTMLInputElement).value))}
 		/>
+		{#if comparisonReference}
+			<div class="compare-toggle" aria-label="Comparison view">
+				<button
+					type="button"
+					class:active={comparisonMode === 'stacked'}
+					onclick={() => comparisonMode = 'stacked'}
+				>
+					Stack
+				</button>
+				<button
+					type="button"
+					class:active={comparisonMode === 'overlap'}
+					onclick={() => comparisonMode = 'overlap'}
+				>
+					Overlap
+				</button>
+			</div>
+		{/if}
 	</div>
 
 	<div class="timeline-scroll" bind:this={containerEl}>
@@ -312,13 +357,31 @@
 					<polyline points={volLinePoints} fill="none" stroke="#81c784" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.8" />
 				{/if}
 
+				{#if comparisonReference && comparisonMode === 'overlap'}
+					<g opacity="0.95">
+						<rect x={LEFT_MARGIN + 10} y="9" width="164" height="24" fill="rgba(19,19,19,0.8)" rx="5" />
+						<line x1={LEFT_MARGIN + 20} y1="21" x2={LEFT_MARGIN + 42} y2="21" stroke="#4fc3f7" stroke-width="2" />
+						<text x={LEFT_MARGIN + 48} y="24" fill="#aaa" font-size="10" font-family="system-ui, sans-serif">master</text>
+						<line x1={LEFT_MARGIN + 88} y1="21" x2={LEFT_MARGIN + 110} y2="21" stroke="#ffb74d" stroke-width="2" stroke-dasharray="5,4" />
+						<text x={LEFT_MARGIN + 116} y="24" fill="#aaa" font-size="10" font-family="system-ui, sans-serif">attempt</text>
+					</g>
+
+					{#if overlayPitchPoints}
+						<polyline points={overlayPitchPoints} fill="none" stroke="#ffb74d" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5,4" opacity="0.95" />
+					{/if}
+
+					{#if overlayVolLinePoints}
+						<polyline points={overlayVolLinePoints} fill="none" stroke="#ba68c8" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5,4" opacity="0.9" />
+					{/if}
+				{/if}
+
 				{#each Array.from({ length: Math.ceil(maxDuration / 2) + 1 }, (_, i) => i * 2) as sec}
 					{@const tx = LEFT_MARGIN + sec * PX_PER_SEC}
 					<line x1={tx} y1="0" x2={tx} y2={svgHeight} stroke="rgba(255,255,255,0.03)" stroke-width="1" />
 					<text x={tx} y={MASTER_HEIGHT - 2} fill="#555" font-size="9" font-family="system-ui, sans-serif" text-anchor="middle">{sec}s</text>
 				{/each}
 
-				{#if comparisonReference}
+				{#if comparisonReference && comparisonMode === 'stacked'}
 					<line x1="0" y1={MASTER_HEIGHT + 10} x2={svgWidth} y2={MASTER_HEIGHT + 10} stroke="rgba(255,255,255,0.08)" stroke-width="1" />
 					<rect x={LEFT_MARGIN} y={COMP_TOP} width={contentWidth} height={COMP_HEIGHT - 20} fill="rgba(255,255,255,0.018)" rx="6" />
 					<text x="8" y={COMP_TOP + 18} fill="#aaa" font-size="10" font-family="system-ui, sans-serif" opacity="0.75">ATTEMPT</text>
@@ -447,6 +510,29 @@
 		width: 96px;
 		accent-color: #4fc3f7;
 		flex-shrink: 0;
+	}
+	.compare-toggle {
+		display: inline-flex;
+		border: 1px solid #3a3a3a;
+		border-radius: 7px;
+		overflow: hidden;
+		flex-shrink: 0;
+	}
+	.compare-toggle button {
+		background: #202020;
+		border: none;
+		color: #888;
+		cursor: pointer;
+		font-size: 12px;
+		font-weight: 600;
+		padding: 7px 10px;
+	}
+	.compare-toggle button + button {
+		border-left: 1px solid #3a3a3a;
+	}
+	.compare-toggle button.active {
+		background: #333;
+		color: #fff;
 	}
 	.timeline-scroll {
 		overflow-x: auto;

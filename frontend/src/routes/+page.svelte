@@ -28,6 +28,19 @@
 	let mediaRecorder = $state<MediaRecorder | null>(null);
 	let recordingStopTimer = $state<number | null>(null);
 
+	function getRecorderOptions(): MediaRecorderOptions {
+		const preferredTypes = [
+			'audio/webm;codecs=opus',
+			'audio/ogg;codecs=opus',
+			'audio/webm',
+		];
+		const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type));
+		return {
+			...(mimeType ? { mimeType } : {}),
+			audioBitsPerSecond: 128000,
+		};
+	}
+
 	function onMasterFile(file: File) {
 		if (masterUrl) URL.revokeObjectURL(masterUrl);
 		masterFile = file;
@@ -147,8 +160,17 @@
 			attemptReference = null;
 			seek(0);
 
-			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-			recorder = new MediaRecorder(stream);
+			stream = await navigator.mediaDevices.getUserMedia({
+				audio: {
+					echoCancellation: false,
+					noiseSuppression: false,
+					autoGainControl: false,
+					channelCount: 1,
+					sampleRate: 48000,
+				},
+			});
+			const recorderOptions = getRecorderOptions();
+			recorder = new MediaRecorder(stream, recorderOptions);
 			const activeStream = stream;
 			const activeRecorder = recorder;
 			const chunks: BlobPart[] = [];
@@ -156,7 +178,7 @@
 				if (e.data.size > 0) chunks.push(e.data);
 			};
 			recorder.onstop = () => {
-				const blob = new Blob(chunks, { type: 'audio/webm' });
+				const blob = new Blob(chunks, { type: activeRecorder.mimeType || recorderOptions.mimeType || 'audio/webm' });
 				recordedBlob = blob;
 				if (recordedUrl) URL.revokeObjectURL(recordedUrl);
 				recordedUrl = URL.createObjectURL(blob);
@@ -200,7 +222,8 @@
 		try {
 			const formData = new FormData();
 			formData.append('master_audio', masterFile);
-			formData.append('user_audio', recordedBlob, 'recording.webm');
+			const ext = recordedBlob.type.includes('ogg') ? 'ogg' : 'webm';
+			formData.append('user_audio', recordedBlob, `recording.${ext}`);
 			const res = await api.post('/shadow/compare-attempt', formData, {
 				headers: { 'Content-Type': 'multipart/form-data' },
 				timeout: 120000,
