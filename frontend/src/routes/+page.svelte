@@ -308,7 +308,7 @@
 
 <style>
 	.app {
-		max-width: 880px;
+		max-width: 1000px;
 		margin: 0 auto;
 		padding: 32px 20px 64px;
 		font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;

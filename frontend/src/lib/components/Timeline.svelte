@@ -189,24 +189,29 @@
 					/>
 				{/each}
 
-				{#each reference.words as word, i}
-					{@const wX = LEFT_MARGIN + word.start * PX_PER_SEC}
-					{@const wW = Math.max(20, (word.end - word.start) * PX_PER_SEC)}
-					{#if i === currentWordIdx}
-						<rect x={wX} y="4" width={wW} height={WORD_HEIGHT - 8} fill="rgba(79,195,247,0.2)" rx="4" />
-					{/if}
-					<text
-						x={wX + 4}
-						y={WORD_HEIGHT / 2 + 1}
-						fill={i === currentWordIdx ? '#4fc3f7' : '#999'}
-						font-size="13"
-						font-weight={i === currentWordIdx ? '700' : '400'}
-						font-family="system-ui, sans-serif"
-						dominant-baseline="middle"
-					>{word.word}</text>
-				{/each}
-
-				<text x="8" y={PITCH_TOP + (PITCH_BOTTOM - PITCH_TOP) / 2 + 4}
+        {#each reference.words as word, i}
+        	{@const wX = LEFT_MARGIN + word.start * PX_PER_SEC}
+        	{@const wEnd = LEFT_MARGIN + word.end * PX_PER_SEC}
+        	{@const wW = Math.max(20, (word.end - word.start) * PX_PER_SEC)}
+        	
+        	{#if i === currentWordIdx}
+        		<rect x={wX} y="4" width={wW} height={WORD_HEIGHT - 8} fill="rgba(79,195,247,0.2)" rx="4" />
+        	{/if}
+        
+        	<text
+        		x={wEnd - 6}
+        		y={WORD_HEIGHT / 2 + 1}
+        		fill={i === currentWordIdx ? '#4fc3f7' : '#999'}
+        		font-size="13"
+        		font-weight={i === currentWordIdx ? '700' : '400'}
+        		font-family="system-ui, sans-serif"
+        		dominant-baseline="middle"
+        		text-anchor="end"
+        	>
+        		{word.word}
+        	</text>
+        {/each}		
+        <text x="8" y={PITCH_TOP + (PITCH_BOTTOM - PITCH_TOP) / 2 + 4}
 					fill="#4fc3f7" font-size="10" font-family="system-ui, sans-serif"
 					transform="rotate(-90, 8, {PITCH_TOP + (PITCH_BOTTOM - PITCH_TOP) / 2 + 4})"
 					text-anchor="middle" opacity="0.7">PITCH</text>

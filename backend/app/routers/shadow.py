@@ -39,6 +39,7 @@ async def analyze_master(audio: UploadFile = File(...)):
     try:
         features = extract_features(path)
         words = transcribe_words(path)
+        print(words)
         return {
             "words": words,
             "times": features["times"],
