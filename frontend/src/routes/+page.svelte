@@ -1,176 +1,562 @@
 <script lang="ts">
 	import { api } from '$lib/api';
+	import type { ReferenceData, ScoreData } from '$lib/types';
+	import UploadZone from '$lib/components/UploadZone.svelte';
+	import Timeline from '$lib/components/Timeline.svelte';
+	import ScoreCard from '$lib/components/ScoreCard.svelte';
 
-	let masterAudio: File | null = null;
-	let userAudio: File | null = null;
+	let masterFile = $state<File | null>(null);
+	let masterUrl = $state<string | null>(null);
+	let reference = $state<ReferenceData | null>(null);
+	let score = $state<ScoreData | null>(null);
 
-	let loading = false;
+	let loading = $state(false);
+	let error = $state<string | null>(null);
+	let step: 'upload' | 'analyzed' | 'done' = $state('upload');
 
-	let reference: any = null;
-	let compare: any = null;
+	let audioEl = $state<HTMLAudioElement | null>(null);
+	let isPlaying = $state(false);
+	let currentTime = $state(0);
+	let rafId = $state(0);
 
-	async function generateReference() {
-		if (!masterAudio) return;
+	let isRecording = $state(false);
+	let recordedBlob = $state<Blob | null>(null);
+	let recordedUrl = $state<string | null>(null);
+	let mediaRecorder = $state<MediaRecorder | null>(null);
 
-		loading = true;
-
-		const formData = new FormData();
-
-		formData.append('audio', masterAudio);
-
-		const response = await api.post(
-			'/shadow/analyze-master',
-			formData,
-			{
-				headers: {
-					'Content-Type': 'multipart/form-data'
-				}
-			}
-		);
-
-		reference = response.data;
-
-		loading = false;
+	function onMasterFile(file: File) {
+		if (masterUrl) URL.revokeObjectURL(masterUrl);
+		masterFile = file;
+		masterUrl = URL.createObjectURL(file);
+		reference = null;
+		score = null;
+		recordedBlob = null;
+		recordedUrl = null;
+		step = 'upload';
+		cleanupAudio();
 	}
 
-	async function compareAttempt() {
-		if (!masterAudio || !userAudio) return;
+	function cleanupAudio() {
+		if (audioEl) {
+			audioEl.pause();
+			audioEl.src = '';
+		}
+		if (rafId) cancelAnimationFrame(rafId);
+		audioEl = null;
+		isPlaying = false;
+		currentTime = 0;
+	}
 
+	function setupAudio(url: string) {
+		cleanupAudio();
+		const el = new Audio(url);
+		el.preload = 'auto';
+		el.onended = () => {
+			isPlaying = false;
+			if (rafId) cancelAnimationFrame(rafId);
+		};
+		audioEl = el;
+	}
+
+	function play() {
+		if (!audioEl) return;
+		audioEl.play();
+		isPlaying = true;
+		function tick() {
+			if (audioEl) currentTime = audioEl.currentTime;
+			if (audioEl && !audioEl.paused) rafId = requestAnimationFrame(tick);
+		}
+		rafId = requestAnimationFrame(tick);
+	}
+
+	function pause() {
+		if (audioEl) audioEl.pause();
+		isPlaying = false;
+		if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+	}
+
+	function seek(t: number) {
+		if (audioEl) {
+			audioEl.currentTime = t;
+			currentTime = t;
+		}
+	}
+
+	async function analyze() {
+		if (!masterFile) return;
 		loading = true;
+		error = null;
+		try {
+			const formData = new FormData();
+			formData.append('audio', masterFile);
+			const res = await api.post('/shadow/analyze-master', formData, {
+				headers: { 'Content-Type': 'multipart/form-data' },
+				timeout: 120000,
+			});
+			reference = res.data;
+			step = 'analyzed';
+			setupAudio(masterUrl!);
+			currentTime = 0;
+		} catch (e: any) {
+			error = e?.response?.data?.detail || e?.message || 'Analysis failed';
+		} finally {
+			loading = false;
+		}
+	}
 
-		const formData = new FormData();
-
-		formData.append('master_audio', masterAudio);
-		formData.append('user_audio', userAudio);
-
-		const response = await api.post(
-			'/shadow/compare-attempt',
-			formData,
-			{
-				headers: {
-					'Content-Type': 'multipart/form-data'
+	async function startRecording() {
+		if (!reference) return;
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			const recorder = new MediaRecorder(stream);
+			const chunks: BlobPart[] = [];
+			recorder.ondataavailable = (e) => {
+				if (e.data.size > 0) chunks.push(e.data);
+			};
+			recorder.onstop = () => {
+				const blob = new Blob(chunks, { type: 'audio/webm' });
+				recordedBlob = blob;
+				if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+				recordedUrl = URL.createObjectURL(blob);
+				stream.getTracks().forEach((t) => t.stop());
+			};
+			recorder.start();
+			mediaRecorder = recorder;
+			isRecording = true;
+			setTimeout(() => {
+				if (recorder.state === 'recording') {
+					recorder.stop();
+					isRecording = false;
 				}
-			}
-		);
+			}, reference.duration * 1000 + 500);
+		} catch (e: any) {
+			error = 'Microphone access denied';
+		}
+	}
 
-		compare = response.data;
+	function stopRecording() {
+		if (mediaRecorder && mediaRecorder.state === 'recording') {
+			mediaRecorder.stop();
+			isRecording = false;
+		}
+	}
 
-		loading = false;
+	async function compare() {
+		if (!masterFile || !recordedBlob || !reference) return;
+		loading = true;
+		error = null;
+		try {
+			const formData = new FormData();
+			formData.append('master_audio', masterFile);
+			formData.append('user_audio', recordedBlob, 'recording.webm');
+			const res = await api.post('/shadow/compare-attempt', formData, {
+				headers: { 'Content-Type': 'multipart/form-data' },
+				timeout: 120000,
+			});
+			score = res.data;
+			step = 'done';
+		} catch (e: any) {
+			error = e?.response?.data?.detail || e?.message || 'Comparison failed';
+		} finally {
+			loading = false;
+		}
+	}
+
+	function resetAll() {
+		if (masterUrl) URL.revokeObjectURL(masterUrl);
+		if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+		cleanupAudio();
+		masterFile = null;
+		masterUrl = null;
+		reference = null;
+		score = null;
+		recordedBlob = null;
+		recordedUrl = null;
+		error = null;
+		step = 'upload';
 	}
 </script>
 
-<div class="container">
-	<h1>Shadowing Coach</h1>
+<div class="app">
+	<header class="header">
+		<h1 class="title">shadowing coach</h1>
+		<p class="subtitle">speak with precision</p>
+	</header>
 
-	<div class="card">
-		<h2>1. Upload Master Audio</h2>
-
-		<input
-			type="file"
-			accept="audio/*"
-			on:change={(e) => {
-				masterAudio = e.currentTarget.files?.[0] || null;
-			}}
-		/>
-
-		<button on:click={generateReference}>
-			Generate Reference
-		</button>
-	</div>
-
-	{#if reference}
-		<div class="card">
-			<h2>Reference Blueprint</h2>
-
-			<h3>Words Timeline</h3>
-
-			<div class="words">
-				{#each reference.words as word}
-					<div class="word">
-						<b>{word.word}</b>
-						<span>{word.start.toFixed(2)}s</span>
-					</div>
-				{/each}
+	<main class="main">
+		{#if error}
+			<div class="error-banner">
+				<span>{error}</span>
+				<button class="dismiss" onclick={() => error = null}>×</button>
 			</div>
-		</div>
-	{/if}
+		{/if}
 
-	<div class="card">
-		<h2>2. Upload Attempt</h2>
+		<!-- Step 1: Upload -->
+		<section class="section">
+			<h2 class="section-label">
+				<span class="step-num">1</span>
+				Upload Master Audio
+			</h2>
+			{#if !masterFile}
+				<UploadZone onFile={onMasterFile} />
+			{:else}
+				<div class="file-selected">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4fc3f7" stroke-width="2">
+						<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+						<polyline points="14 2 14 8 20 8" />
+					</svg>
+					<span class="file-name">{masterFile.name}</span>
+					<span class="file-size">({(masterFile.size / 1024).toFixed(0)} KB)</span>
+					<button class="link-btn" onclick={resetAll}>Change</button>
+				</div>
+				<div class="analyze-row">
+					<button class="btn btn-primary" onclick={analyze} disabled={loading}>
+						{#if loading}
+              <span class="spinner"></span>
+              Analyzing...
+						{:else}
+							Analyze Audio
+						{/if}
+					</button>
+				</div>
+			{/if}
+		</section>
 
-		<input
-			type="file"
-			accept="audio/*"
-			on:change={(e) => {
-				userAudio = e.currentTarget.files?.[0] || null;
-			}}
-		/>
+		<!-- Step 2: Blueprint + Playback -->
+		{#if reference}
+			<section class="section">
+				<h2 class="section-label">
+					<span class="step-num">2</span>
+					Speaking Blueprint
+				</h2>
+				<Timeline
+					{reference}
+					{currentTime}
+					{isPlaying}
+					onPlay={play}
+					onPause={pause}
+					onSeek={seek}
+				/>
+			</section>
 
-		<button on:click={compareAttempt}>
-			Compare Attempt
-		</button>
-	</div>
+			<!-- Step 3: Recording -->
+			<section class="section">
+				<h2 class="section-label">
+					<span class="step-num">3</span>
+					Record Your Attempt
+				</h2>
+				<div class="recording-area">
+					{#if !recordedBlob && !isRecording}
+						<button class="btn btn-record" onclick={startRecording}>
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+								<circle cx="12" cy="12" r="8" />
+							</svg>
+							Start Recording
+						</button>
+						<p class="hint">Max {reference.duration.toFixed(0)} seconds</p>
+					{/if}
 
-	{#if compare}
-		<div class="card">
-			<h2>Score</h2>
+					{#if isRecording}
+						<div class="recording-active">
+              <div class="rec-pulse"></div>
+              <span class="rec-text">Recording...</span>
+							<button class="btn btn-secondary" onclick={stopRecording}>
+								Stop
+							</button>
+						</div>
+					{/if}
 
-			<div class="score">
-				{compare.score}%
-			</div>
-		</div>
-	{/if}
+					{#if recordedUrl && !isRecording}
+						<div class="recorded-preview">
+              <audio controls src={recordedUrl} class="audio-player"></audio>
+							<div class="compare-row">
+								<button class="btn btn-primary" onclick={compare} disabled={loading}>
+									{#if loading}
+                    <span class="spinner"></span>
+                    Comparing...
+									{:else}
+										Compare with Master
+									{/if}
+								</button>
+								<button class="btn btn-secondary" onclick={() => {
+									recordedBlob = null;
+									if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+									recordedUrl = null;
+								}}>Re-record</button>
+							</div>
+						</div>
+					{/if}
+				</div>
+			</section>
+		{/if}
 
-	{#if loading}
-		<div class="loading">
-			Loading...
-		</div>
-	{/if}
+		<!-- Step 4: Score -->
+		{#if score}
+			<section class="section">
+				<h2 class="section-label">
+					<span class="step-num">4</span>
+					Results
+				</h2>
+				<ScoreCard {score} />
+				<div class="reset-row">
+					<button class="btn btn-secondary" onclick={resetAll}>Start Over</button>
+				</div>
+			</section>
+		{/if}
+	</main>
 </div>
 
 <style>
-	:global(body) {
+	.app {
+		max-width: 880px;
+		margin: 0 auto;
+		padding: 32px 20px 64px;
+		font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+	}
+
+	.header {
+		text-align: center;
+		margin-bottom: 32px;
+	}
+
+	.title {
+		font-size: 24px;
+		font-weight: 700;
+		color: #fff;
 		margin: 0;
-		font-family: sans-serif;
-		background: #111;
-		color: white;
+		letter-spacing: 1px;
+		text-transform: uppercase;
 	}
 
-	.container {
-		max-width: 900px;
-		margin: auto;
-		padding: 40px;
+	.subtitle {
+		font-size: 13px;
+		color: #666;
+		margin: 4px 0 0;
+		letter-spacing: 2px;
+		text-transform: uppercase;
 	}
 
-	.card {
-		background: #1a1a1a;
-		padding: 20px;
-		margin-bottom: 20px;
-		border-radius: 12px;
-	}
-
-	button {
-		margin-top: 12px;
-		padding: 10px 16px;
-		cursor: pointer;
-	}
-
-	.words {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 10px;
-	}
-
-	.word {
-		background: #222;
-		padding: 10px;
-		border-radius: 8px;
+	.main {
 		display: flex;
 		flex-direction: column;
+		gap: 24px;
 	}
 
-	.score {
-		font-size: 48px;
-		font-weight: bold;
+	.section {
+		background: #181818;
+		border-radius: 14px;
+		padding: 20px 24px;
+		border: 1px solid #222;
+	}
+
+	.section-label {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 14px;
+		font-weight: 600;
+		color: #ccc;
+		margin: 0 0 16px;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.step-num {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		background: #333;
+		color: #888;
+		font-size: 11px;
+		font-weight: 700;
+		flex-shrink: 0;
+	}
+
+	.file-selected {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 16px;
+		background: #1f1f1f;
+		border-radius: 8px;
+		margin-bottom: 12px;
+	}
+
+	.file-name {
+		color: #ccc;
+		font-size: 14px;
+		font-weight: 500;
+	}
+
+	.file-size {
+		color: #666;
+		font-size: 12px;
+	}
+
+	.link-btn {
+		background: none;
+		border: none;
+		color: #4fc3f7;
+		cursor: pointer;
+		font-size: 13px;
+		margin-left: auto;
+		padding: 4px 8px;
+	}
+
+	.link-btn:hover {
+		text-decoration: underline;
+	}
+
+	.analyze-row {
+		display: flex;
+		gap: 12px;
+	}
+
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 20px;
+		border-radius: 8px;
+		border: none;
+		font-size: 14px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.btn-primary {
+		background: #4fc3f7;
+		color: #000;
+	}
+
+	.btn-primary:hover:not(:disabled) {
+		background: #39b0e4;
+	}
+
+	.btn-secondary {
+		background: #2a2a2a;
+		color: #ccc;
+		border: 1px solid #444;
+	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: #333;
+		border-color: #555;
+	}
+
+	.btn-record {
+		background: #f44336;
+		color: #fff;
+	}
+
+	.btn-record:hover {
+		background: #d32f2f;
+	}
+
+	.hint {
+		color: #666;
+		font-size: 12px;
+		margin: 8px 0 0;
+	}
+
+	.recording-area {
+		padding: 4px 0;
+	}
+
+	.recording-active {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 16px;
+		background: rgba(244, 67, 54, 0.1);
+		border-radius: 8px;
+		border: 1px solid rgba(244, 67, 54, 0.3);
+	}
+
+	.rec-pulse {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		background: #f44336;
+		animation: pulse 1s ease-in-out infinite;
+		flex-shrink: 0;
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 1; transform: scale(1); }
+		50% { opacity: 0.5; transform: scale(0.8); }
+	}
+
+	.rec-text {
+		color: #f44336;
+		font-size: 14px;
+		font-weight: 500;
+	}
+
+	.recorded-preview {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.audio-player {
+		width: 100%;
+		height: 40px;
+		border-radius: 6px;
+	}
+
+	.compare-row {
+		display: flex;
+		gap: 12px;
+	}
+
+	.reset-row {
+		margin-top: 16px;
+		display: flex;
+		justify-content: center;
+	}
+
+	.spinner {
+		width: 14px;
+		height: 14px;
+		border: 2px solid rgba(0,0,0,0.2);
+		border-top-color: #000;
+		border-radius: 50%;
+		animation: spin 0.6s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.error-banner {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 16px;
+		background: rgba(244,67,54,0.1);
+		border: 1px solid rgba(244,67,54,0.3);
+		border-radius: 8px;
+		color: #f44336;
+		font-size: 13px;
+	}
+
+	.dismiss {
+		background: none;
+		border: none;
+		color: #f44336;
+		cursor: pointer;
+		font-size: 18px;
+		margin-left: auto;
+		padding: 0 4px;
 	}
 </style>

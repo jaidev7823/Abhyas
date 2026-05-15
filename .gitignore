@@ -9,3 +9,11 @@ transcript.txt
 review*/
 __init__.py
 __pycache__
+backend/temp/
+backend/.env
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/.env
+*.egg-info
+dist/
+build/
