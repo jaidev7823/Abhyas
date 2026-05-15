@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { ReferenceData, ScoreData } from '$lib/types';
+	import type { ComparisonResponse, ReferenceData, ScoreData } from '$lib/types';
 	import UploadZone from '$lib/components/UploadZone.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
 	import ScoreCard from '$lib/components/ScoreCard.svelte';
@@ -8,6 +8,7 @@
 	let masterFile = $state<File | null>(null);
 	let masterUrl = $state<string | null>(null);
 	let reference = $state<ReferenceData | null>(null);
+	let attemptReference = $state<ReferenceData | null>(null);
 	let score = $state<ScoreData | null>(null);
 
 	let loading = $state(false);
@@ -18,19 +19,24 @@
 	let isPlaying = $state(false);
 	let currentTime = $state(0);
 	let rafId = $state(0);
+	let masterMuted = $state(false);
+	let masterVolume = $state(0.75);
 
 	let isRecording = $state(false);
 	let recordedBlob = $state<Blob | null>(null);
 	let recordedUrl = $state<string | null>(null);
 	let mediaRecorder = $state<MediaRecorder | null>(null);
+	let recordingStopTimer = $state<number | null>(null);
 
 	function onMasterFile(file: File) {
 		if (masterUrl) URL.revokeObjectURL(masterUrl);
 		masterFile = file;
 		masterUrl = URL.createObjectURL(file);
 		reference = null;
+		attemptReference = null;
 		score = null;
 		recordedBlob = null;
+		if (recordedUrl) URL.revokeObjectURL(recordedUrl);
 		recordedUrl = null;
 		step = 'upload';
 		cleanupAudio();
@@ -51,22 +57,30 @@
 		cleanupAudio();
 		const el = new Audio(url);
 		el.preload = 'auto';
+		el.volume = masterVolume;
+		el.muted = masterMuted;
 		el.onended = () => {
 			isPlaying = false;
+			currentTime = reference?.duration ?? el.currentTime;
 			if (rafId) cancelAnimationFrame(rafId);
 		};
 		audioEl = el;
 	}
 
-	function play() {
-		if (!audioEl) return;
-		audioEl.play();
-		isPlaying = true;
+	function startPlaybackLoop() {
+		if (rafId) cancelAnimationFrame(rafId);
 		function tick() {
 			if (audioEl) currentTime = audioEl.currentTime;
 			if (audioEl && !audioEl.paused) rafId = requestAnimationFrame(tick);
 		}
 		rafId = requestAnimationFrame(tick);
+	}
+
+	async function play() {
+		if (!audioEl) return;
+		await audioEl.play();
+		isPlaying = true;
+		startPlaybackLoop();
 	}
 
 	function pause() {
@@ -82,6 +96,22 @@
 		}
 	}
 
+	function toggleMasterMute() {
+		masterMuted = !masterMuted;
+		if (audioEl) audioEl.muted = masterMuted;
+	}
+
+	function setMasterVolume(value: number) {
+		masterVolume = Math.max(0, Math.min(1, value));
+		if (audioEl) {
+			audioEl.volume = masterVolume;
+			if (masterVolume > 0 && masterMuted) {
+				masterMuted = false;
+				audioEl.muted = false;
+			}
+		}
+	}
+
 	async function analyze() {
 		if (!masterFile) return;
 		loading = true;
@@ -94,6 +124,7 @@
 				timeout: 120000,
 			});
 			reference = res.data;
+			attemptReference = null;
 			step = 'analyzed';
 			setupAudio(masterUrl!);
 			currentTime = 0;
@@ -106,9 +137,20 @@
 
 	async function startRecording() {
 		if (!reference) return;
+		let stream: MediaStream | null = null;
+		let recorder: MediaRecorder | null = null;
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-			const recorder = new MediaRecorder(stream);
+			if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+			recordedBlob = null;
+			recordedUrl = null;
+			score = null;
+			attemptReference = null;
+			seek(0);
+
+			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			recorder = new MediaRecorder(stream);
+			const activeStream = stream;
+			const activeRecorder = recorder;
 			const chunks: BlobPart[] = [];
 			recorder.ondataavailable = (e) => {
 				if (e.data.size > 0) chunks.push(e.data);
@@ -118,27 +160,37 @@
 				recordedBlob = blob;
 				if (recordedUrl) URL.revokeObjectURL(recordedUrl);
 				recordedUrl = URL.createObjectURL(blob);
-				stream.getTracks().forEach((t) => t.stop());
+				activeStream.getTracks().forEach((t) => t.stop());
+				if (recordingStopTimer) {
+					clearTimeout(recordingStopTimer);
+					recordingStopTimer = null;
+				}
+				isRecording = false;
 			};
 			recorder.start();
 			mediaRecorder = recorder;
 			isRecording = true;
-			setTimeout(() => {
-				if (recorder.state === 'recording') {
-					recorder.stop();
-					isRecording = false;
+			await play();
+			recordingStopTimer = window.setTimeout(() => {
+				if (activeRecorder.state === 'recording') {
+					stopRecording();
 				}
 			}, reference.duration * 1000 + 500);
 		} catch (e: any) {
-			error = 'Microphone access denied';
+			isRecording = false;
+			pause();
+			error = e?.name === 'NotAllowedError' ? 'Microphone access denied' : e?.message || 'Recording failed';
+			if (recorder?.state === 'recording') recorder.stop();
+			stream?.getTracks().forEach((t) => t.stop());
 		}
 	}
 
 	function stopRecording() {
 		if (mediaRecorder && mediaRecorder.state === 'recording') {
 			mediaRecorder.stop();
-			isRecording = false;
 		}
+		pause();
+		isRecording = false;
 	}
 
 	async function compare() {
@@ -153,7 +205,15 @@
 				headers: { 'Content-Type': 'multipart/form-data' },
 				timeout: 120000,
 			});
-			score = res.data;
+			const data = res.data as ComparisonResponse;
+			score = {
+				overall: data.overall,
+				timing: data.timing,
+				pitch: data.pitch,
+				rhythm: data.rhythm,
+				pacing: data.pacing,
+			};
+			attemptReference = data.attempt ?? null;
 			step = 'done';
 		} catch (e: any) {
 			error = e?.response?.data?.detail || e?.message || 'Comparison failed';
@@ -163,12 +223,14 @@
 	}
 
 	function resetAll() {
+		if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
 		if (masterUrl) URL.revokeObjectURL(masterUrl);
 		if (recordedUrl) URL.revokeObjectURL(recordedUrl);
 		cleanupAudio();
 		masterFile = null;
 		masterUrl = null;
 		reference = null;
+		attemptReference = null;
 		score = null;
 		recordedBlob = null;
 		recordedUrl = null;
@@ -231,11 +293,16 @@
 				</h2>
 				<Timeline
 					{reference}
+					comparisonReference={attemptReference}
 					{currentTime}
 					{isPlaying}
+					{masterMuted}
+					{masterVolume}
 					onPlay={play}
 					onPause={pause}
 					onSeek={seek}
+					onToggleMute={toggleMasterMute}
+					onVolumeChange={setMasterVolume}
 				/>
 			</section>
 
@@ -282,6 +349,8 @@
 									recordedBlob = null;
 									if (recordedUrl) URL.revokeObjectURL(recordedUrl);
 									recordedUrl = null;
+									score = null;
+									attemptReference = null;
 								}}>Re-record</button>
 							</div>
 						</div>

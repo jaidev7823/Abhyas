@@ -28,3 +28,7 @@ export interface ScoreData {
 	rhythm: number;
 	pacing: number;
 }
+
+export interface ComparisonResponse extends ScoreData {
+	attempt?: ReferenceData;
+}

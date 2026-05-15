@@ -67,7 +67,21 @@ async def compare_attempt(
     try:
         m_feat = extract_features(master_path)
         u_feat = extract_features(user_path)
-        return calculate_score(m_feat, u_feat)
+        score = calculate_score(m_feat, u_feat)
+        return {
+            **score,
+            "attempt": {
+                "words": [],
+                "times": u_feat["times"],
+                "rms": u_feat["rms"],
+                "pitch": u_feat["pitch"],
+                "pause_mask": u_feat["pause_mask"],
+                "pause_regions": u_feat["pause_regions"],
+                "cps": u_feat["cps"],
+                "duration": u_feat["duration"],
+                "sample_rate": u_feat["sample_rate"],
+            },
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
