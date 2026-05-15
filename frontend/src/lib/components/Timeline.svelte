@@ -30,11 +30,23 @@
 	const PX_PER_SEC = 180;
 	const LEFT_MARGIN = 55;
 	const MASTER_HEIGHT = 270;
-	const WORD_HEIGHT = 48;
-	const PITCH_TOP = 52;
-	const PITCH_BOTTOM = 158;
-	const VOL_TOP = 166;
-	const VOL_BOTTOM = 248;
+  const MAX_LANES = 4;
+  const LANE_HEIGHT = 18;
+  
+  const WORD_TOP_PADDING = 8;
+  const WORD_BOTTOM_PADDING = 8;
+  
+  const WORD_HEIGHT =
+  	WORD_TOP_PADDING +
+  	MAX_LANES * LANE_HEIGHT +
+  	WORD_BOTTOM_PADDING;
+  
+  const PITCH_TOP = WORD_HEIGHT + 12;
+  const PITCH_BOTTOM = PITCH_TOP + 106;
+  
+  const VOL_TOP = PITCH_BOTTOM + 8;
+  let VOL_BOTTOM = VOL_TOP + 82;
+	 VOL_BOTTOM = 248;
 	const COMP_GAP = 22;
 	const COMP_TOP = MASTER_HEIGHT + COMP_GAP;
 	const COMP_HEIGHT = 210;
@@ -186,6 +198,42 @@
 			scrollEl.scrollLeft = wordCenter - half;
 		}
 	});
+
+
+	function estimateWidth(text: string) {
+		return text.length * 7.5;
+	}
+
+	type Lane = {
+		lastEnd: number;
+	};
+
+	let wordLanes = $derived.by(() => {
+		const lanes: Lane[] = [];
+		const result: number[] = [];
+		for (const word of reference.words) {
+			const rawEnd = LEFT_MARGIN + word.end * PX_PER_SEC;
+			const width = estimateWidth(word.word);
+			const startX = rawEnd - width;
+			let assigned = false;
+			for (let l = 0; l < MAX_LANES; l++) {
+				if (!lanes[l]) {
+					lanes[l] = { lastEnd: -99999 };
+				}
+				if (startX > lanes[l].lastEnd + 8) {
+					lanes[l].lastEnd = rawEnd;
+					result.push(l);
+					assigned = true;
+					break;
+				}
+			}
+			if (!assigned) {
+				lanes[MAX_LANES - 1].lastEnd = rawEnd;
+				result.push(MAX_LANES - 1);
+			}
+		}
+		return result;
+	});
 </script>
 
 <div class="timeline-container">
@@ -283,23 +331,35 @@
 				<rect x={LEFT_MARGIN} y={VOL_TOP} width={contentWidth} height={VOL_BOTTOM - VOL_TOP} fill="rgba(129,199,132,0.03)" />
 
 				{#each [0, 0.25, 0.5, 0.75, 1] as frac}
+					{@const y = PITCH_BOTTOM - frac * (PITCH_BOTTOM - PITCH_TOP)}
 					<line
 						x1={LEFT_MARGIN}
-						y1={PITCH_BOTTOM - frac * (PITCH_BOTTOM - PITCH_TOP)}
+						y1={y}
 						x2={LEFT_MARGIN + contentWidth}
-						y2={PITCH_BOTTOM - frac * (PITCH_BOTTOM - PITCH_TOP)}
+						y2={y}
 						stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="4,4"
 					/>
+					<text
+						x={LEFT_MARGIN - 5} y={y + 3}
+						fill="#4fc3f7" font-size="9" font-family="system-ui, sans-serif"
+						text-anchor="end" opacity="0.5"
+					>{(maxPitch * frac).toFixed(0)}</text>
 				{/each}
 
 				{#each [0, 0.33, 0.66, 1] as frac}
+					{@const y = VOL_BOTTOM - frac * (VOL_BOTTOM - VOL_TOP)}
 					<line
 						x1={LEFT_MARGIN}
-						y1={VOL_BOTTOM - frac * (VOL_BOTTOM - VOL_TOP)}
+						y1={y}
 						x2={LEFT_MARGIN + contentWidth}
-						y2={VOL_BOTTOM - frac * (VOL_BOTTOM - VOL_TOP)}
+						y2={y}
 						stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="4,4"
 					/>
+					<text
+						x={LEFT_MARGIN - 5} y={y + 3}
+						fill="#81c784" font-size="9" font-family="system-ui, sans-serif"
+						text-anchor="end" opacity="0.5"
+					>{(maxRms * frac).toFixed(3)}</text>
 				{/each}
 
 				<line x1={LEFT_MARGIN} y1={PITCH_TOP} x2={LEFT_MARGIN + contentWidth} y2={PITCH_TOP} stroke="rgba(255,255,255,0.08)" stroke-width="1" />
@@ -317,17 +377,30 @@
 				{/each}
 
         {#each reference.words as word, i}
-        	{@const wX = LEFT_MARGIN + word.start * PX_PER_SEC}
-        	{@const wEnd = LEFT_MARGIN + word.end * PX_PER_SEC}
-        	{@const wW = Math.max(20, (word.end - word.start) * PX_PER_SEC)}
-        	
+        	{@const rawEnd = LEFT_MARGIN + word.end * PX_PER_SEC}
+        	{@const width = estimateWidth(word.word)}
+        
+        	<!-- because text-anchor=end -->
+        	{@const startX = rawEnd - width}
+        
+        	{@const laneIndex = wordLanes[i]}
+        
+        	{@const y = WORD_HEIGHT / 2 + 1 + laneIndex * LANE_HEIGHT}
+        
         	{#if i === currentWordIdx}
-        		<rect x={wX} y="4" width={wW} height={WORD_HEIGHT - 8} fill="rgba(79,195,247,0.2)" rx="4" />
+        		<rect
+        			x={startX - 4}
+        			y={y - 11}
+        			width={width + 8}
+        			height="18"
+        			fill="rgba(79,195,247,0.2)"
+        			rx="4"
+        		/>
         	{/if}
         
         	<text
-        		x={wEnd - 6}
-        		y={WORD_HEIGHT / 2 + 1}
+        		x={rawEnd}
+        		y={y}
         		fill={i === currentWordIdx ? '#4fc3f7' : '#999'}
         		font-size="13"
         		font-weight={i === currentWordIdx ? '700' : '400'}
@@ -337,7 +410,7 @@
         	>
         		{word.word}
         	</text>
-        {/each}		
+        {/each}
         <text x="8" y={PITCH_TOP + (PITCH_BOTTOM - PITCH_TOP) / 2 + 4}
 					fill="#4fc3f7" font-size="10" font-family="system-ui, sans-serif"
 					transform="rotate(-90, 8, {PITCH_TOP + (PITCH_BOTTOM - PITCH_TOP) / 2 + 4})"
@@ -408,9 +481,41 @@
 						/>
 					{/each}
 
+					{#each [0, 0.25, 0.5, 0.75, 1] as frac}
+						{@const y = COMP_PITCH_BOTTOM - frac * (COMP_PITCH_BOTTOM - COMP_PITCH_TOP)}
+						<line
+							x1={LEFT_MARGIN}
+							y1={y}
+							x2={LEFT_MARGIN + contentWidth}
+							y2={y}
+							stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="4,4"
+						/>
+						<text
+							x={LEFT_MARGIN - 5} y={y + 3}
+							fill="#ffb74d" font-size="9" font-family="system-ui, sans-serif"
+							text-anchor="end" opacity="0.5"
+						>{(maxPitch * frac).toFixed(0)}</text>
+					{/each}
+
 					{#if comparisonPitchPoints}
 						<polyline points={comparisonPitchPoints} fill="none" stroke="#ffb74d" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.9" />
 					{/if}
+
+					{#each [0, 0.33, 0.66, 1] as frac}
+						{@const y = COMP_VOL_BOTTOM - frac * (COMP_VOL_BOTTOM - COMP_VOL_TOP)}
+						<line
+							x1={LEFT_MARGIN}
+							y1={y}
+							x2={LEFT_MARGIN + contentWidth}
+							y2={y}
+							stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="4,4"
+						/>
+						<text
+							x={LEFT_MARGIN - 5} y={y + 3}
+							fill="#ba68c8" font-size="9" font-family="system-ui, sans-serif"
+							text-anchor="end" opacity="0.5"
+						>{(maxRms * frac).toFixed(3)}</text>
+					{/each}
 
 					{#if comparisonVolFill}
 						<path d={comparisonVolFill} fill="rgba(186,104,200,0.15)" />
