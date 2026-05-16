@@ -8,3 +8,5 @@ python-multipart
 scipy
 scikit-learn
 soundfile
+huggingface_hub
+
