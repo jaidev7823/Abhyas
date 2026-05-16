@@ -58,7 +58,7 @@
 		const mimeType = preferredTypes.find((type) => MediaRecorder.isTypeSupported(type));
 		return {
 			...(mimeType ? { mimeType } : {}),
-			audioBitsPerSecond: 128000,
+			audioBitsPerSecond: 256000,
 		};
 	}
 
@@ -271,13 +271,13 @@
 			seek(0);
 
 			stream = await navigator.mediaDevices.getUserMedia({
-				audio: {
-					echoCancellation: false,
-					noiseSuppression: false,
-					autoGainControl: true,
-					channelCount: 1,
-					sampleRate: 48000,
-				},
+      audio: {
+      	echoCancellation: false,
+      	noiseSuppression: false,
+      	autoGainControl: false,
+      	channelCount: 1,
+        sampleRate: 48000,
+      },
 			});
 			const recorderOptions = getRecorderOptions();
 			recorder = new MediaRecorder(stream, recorderOptions);
@@ -299,9 +299,10 @@
 				}
 				isRecording = false;
 			};
-			recorder.start();
+			recorder.start(250);
 			mediaRecorder = recorder;
 			isRecording = true;
+      if (audioEl) { audioEl.muted = true; }
 			await play();
       recordingStopTimer = window.setTimeout(() => {
       	if (
@@ -313,6 +314,7 @@
       	}
       }, (activeReference.duration + 1) * 1000);
 		} catch (e: any) {
+      if (audioEl) { audioEl.muted = masterMuted; }
 			isRecording = false;
 			pause();
 			error = e?.name === 'NotAllowedError' ? 'Microphone access denied' : e?.message || 'Recording failed';
