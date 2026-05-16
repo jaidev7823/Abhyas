@@ -162,11 +162,19 @@
 		el.preload = 'auto';
 		el.volume = masterVolume;
 		el.muted = masterMuted;
-		el.onended = () => {
-			isPlaying = false;
-			currentTime = activeReference?.duration ?? 0;
-			if (rafId) cancelAnimationFrame(rafId);
-		};
+    el.onended = () => {
+    	if (isRecording) {
+    		stopRecording();
+    	}
+    
+    	isPlaying = false;
+    	currentTime = activeReference?.duration ?? 0;
+    
+    	if (rafId) {
+    		cancelAnimationFrame(rafId);
+    		rafId = 0;
+    	}
+    };
 		audioEl = el;
 	}
 
@@ -266,7 +274,7 @@
 				audio: {
 					echoCancellation: false,
 					noiseSuppression: false,
-					autoGainControl: false,
+					autoGainControl: true,
 					channelCount: 1,
 					sampleRate: 48000,
 				},
@@ -295,11 +303,15 @@
 			mediaRecorder = recorder;
 			isRecording = true;
 			await play();
-			recordingStopTimer = window.setTimeout(() => {
-				if (activeRecorder.state === 'recording') {
-					stopRecording();
-				}
-			}, activeReference.duration * 1000 + 500);
+      recordingStopTimer = window.setTimeout(() => {
+      	if (
+      		activeRecorder.state === 'recording' &&
+      		audioEl &&
+      		!audioEl.ended
+      	) {
+      		stopRecording();
+      	}
+      }, (activeReference.duration + 1) * 1000);
 		} catch (e: any) {
 			isRecording = false;
 			pause();
