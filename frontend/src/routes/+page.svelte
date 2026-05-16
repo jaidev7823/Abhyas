@@ -536,18 +536,18 @@
 		{/if}
 
 		<!-- Step 4: Score -->
-		{#if score}
-			<section class="section">
-				<h2 class="section-label">
-					<span class="step-num">4</span>
-					Results
-				</h2>
-				<ScoreCard {score} />
-				<div class="reset-row">
-					<button class="btn btn-secondary" onclick={resetAll}>Start Over</button>
-				</div>
-			</section>
-		{/if}
+		<!-- {#if score} -->
+		<!-- 	<section class="section"> -->
+		<!-- 		<h2 class="section-label"> -->
+		<!-- 			<span class="step-num">4</span> -->
+		<!-- 			Results -->
+		<!-- 		</h2> -->
+		<!-- 		<ScoreCard {score} /> -->
+		<!-- 		<div class="reset-row"> -->
+		<!-- 			<button class="btn btn-secondary" onclick={resetAll}>Start Over</button> -->
+		<!-- 		</div> -->
+		<!-- 	</section> -->
+		<!-- {/if} -->
 	</main>
 </div>
 

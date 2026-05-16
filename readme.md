@@ -1,45 +1,227 @@
-# Pro-Speech Analyzer
+# Shadowing Coach — Architecture
 
-An AI-powered pipeline to analyze speech for clarity, tone, and "executive presence." It uses Whisper for transcription, SpeechBrain for emotion detection, and Librosa for vocal dynamics.
+## Overview
 
-## Project Structure
-Ensure your models folder is structured exactly as follows:
-```text
+Visually guided speech shadowing coach. Users upload a master audio sentence, the system analyzes it into a synchronized "speaking blueprint", and the user can practice shadowing with real-time visual feedback.
 
-├── main.py
-├── video.mp4
-└── models/
-    ├── faster-whisper-large-v3/
-    └── emotion-recognition/
-        ├── custom_interface.py
-        ├── hyperparams.yaml
-        ├── model.ckpt
-        └── label_encoder.txt
-```
-
-## Cross-Platform Setup Guide
-
-### Linux (CachyOS / Arch / Ubuntu)
-* Drivers: Ensure nvidia-utils and cuda are installed.
-* Environment: Use export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib if libraries aren't found.
-* Performance: Best performance for faster-whisper using CUDA.
-
-### Windows
-1. CUDA: Install the NVIDIA CUDA Toolkit (12.x).
-2. FFmpeg: Download the FFmpeg essentials build, extract it, and add the bin folder to your System PATH.
-3. Python Path: In main.py, the script uses os.path.join so it is Windows-ready.
-4. C++ Redistributable: Ensure you have the Visual C++ Redistributable installed for CTranslate2.
-
-### macOS (M1/M2/M3 Apple Silicon)
-1. Drivers: macOS uses Metal (MPS) instead of CUDA.
-2. Main.py Update: You must change device="cuda" to device="cpu" (or device="mps") in the WhisperModel and foreign_class calls.
-3. Dependencies:
-   brew install ffmpeg libsndfile
-   pip install torch torchvision torchaudio
+UX feel: karaoke + rhythm game + speech conductor + pronunciation coach.
 
 ---
 
-## Common Troubleshooting
-* Error: libcublas.so missing: (Linux) Re-link your libraries or install nvidia-cublas-cu12.
-* Error: ffmpeg not found: Ensure the command ffmpeg -version works in your terminal before running.
-* Error: OutOfMemory: If your GPU VRAM is low, change compute_type="float16" to compute_type="int8_float16".
+## Project Structure
+
+```
+abhyas/
+├── backend/                    # FastAPI Python backend
+│   ├── app/
+│   │   ├── core/
+│   │   │   └── config.py       # Settings: sample rate, Whisper path, CUDA config
+│   │   ├── routers/
+│   │   │   └── shadow.py       # API endpoints: analyze-master, compare-attempt
+│   │   ├── schemas/
+│   │   │   └── shadow_schema.py # Pydantic models for request/response
+│   │   ├── services/
+│   │   │   ├── feature_service.py  # librosa: RMS, pitch, pause detection, CPS
+│   │   │   ├── whisper_service.py  # faster-whisper transcription with timestamps
+│   │   │   └── scoring_service.py  # Multi-dimensional DTW-based comparison
+│   │   ├── utils/
+│   │   │   └── audio_utils.py  # Placeholder for audio utilities
+│   │   └── main.py             # FastAPI app entry point
+│   ├── models/
+│   │   └── faster-whisper-large-v3/  # Whisper model (not in git)
+│   ├── temp/                   # Uploaded audio temp files (not in git)
+│   └── requirements.txt
+│
+├── frontend/                   # SvelteKit SPA
+│   ├── src/
+│   │   ├── lib/
+│   │   │   ├── api.ts          # Axios instance → http://127.0.0.1:8000
+│   │   │   ├── types.ts        # TypeScript interfaces
+│   │   │   ├── stores.ts       # Legacy Svelte stores (unused)
+│   │   │   └── components/
+│   │   │       ├── UploadZone.svelte  # Drag-drop file upload
+│   │   │       ├── Timeline.svelte    # SVG visualization (core)
+│   │   │       └── ScoreCard.svelte   # Score display with gauges
+│   │   └── routes/
+│   │       ├── +page.svelte    # Main SPA (all UI orchestrated here)
+│   │       ├── +layout.svelte  # Root layout
+│   │       └── layout.css      # Global styles + Tailwind import
+│   ├── package.json
+│   └── vite.config.ts
+│
+└── docs/
+    └── ARCHITECTURE.md         # This file
+```
+
+---
+
+## Backend
+
+### Tech Stack
+- **FastAPI** — REST API server
+- **faster-whisper** (large-v3) — transcription with word-level timestamps (CUDA, float16)
+- **librosa** — audio feature extraction (RMS, YIN pitch, change-point score)
+- **scipy** — median filtering, signal processing
+- **numpy** — array operations
+
+### Endpoints
+
+#### `POST /shadow/analyze-master`
+Upload a single audio file. Returns:
+
+| Field | Type | Description |
+|---|---|---|
+| `words` | `[{word, start, end}]` | Transcribed words with timestamps |
+| `times` | `[float]` | Per-frame time values (seconds) |
+| `rms` | `[float]` | RMS energy envelope |
+| `pitch` | `[float]` | YIN pitch contour (Hz, 0 = unvoiced) |
+| `pause_mask` | `[bool]` | True where RMS < 15th percentile |
+| `pause_regions` | `[{start, end}]` | Contiguous pause blocks (>= 50ms) |
+| `cps` | `[float]` | Change-point score (smoothed delta RMS) |
+| `duration` | `float` | Total audio duration (seconds) |
+| `sample_rate` | `int` | Sample rate (always 16000) |
+
+#### `POST /shadow/compare-attempt`
+Upload master + user audio. Returns:
+
+| Field | Description |
+|---|---|
+| `overall` | Weighted composite score (0-100) |
+| `timing` | Duration ratio match (0-100) |
+| `pitch` | DTW distance on pitch contours (0-100) |
+| `rhythm` | DTW distance on RMS envelopes (0-100) |
+| `pacing` | DTW distance on CPS (0-100) |
+
+### Scoring Formula
+```
+overall = timing * 0.15 + pitch * 0.35 + rhythm * 0.25 + pacing * 0.25
+```
+DTW distances converted via `score = 100 * exp(-dist / 0.5)`, clipped to [0, 100].
+
+### Key Design Decisions
+- Model loads **lazily** (on first request), not on import — avoids CUDA OOM at startup
+- All temp files cleaned up in `finally` blocks
+- No matplotlib rendering server-side — clean JSON only
+- No silent CPU fallback — CUDA required
+- Minimum pause region: 50ms
+
+### How to Run
+```bash
+cd backend
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+---
+
+## Frontend
+
+### Tech Stack
+- **SvelteKit 2** (Svelte 5 runes mode)
+- **TypeScript** (strict mode)
+- **Tailwind CSS 4** (via Vite plugin)
+- **Vite 8**
+- **Axios** — HTTP client
+
+### Page Flow (`+page.svelte`)
+
+1. **Upload** — User drops/selects audio file via `UploadZone`
+2. **Analyze** — POST `/shadow/analyze-master`, receives reference data
+3. **Blueprint** — `Timeline` renders SVG with all lanes
+4. **Playback** — User plays audio, cursor moves, words highlight
+5. **Record** — MediaRecorder captures mic, auto-stops at master duration
+6. **Compare** — POST `/shadow/compare-attempt`, receives scores
+7. **Results** — `ScoreCard` shows overall + sub-scores
+
+### Timeline Visualization (`Timeline.svelte`)
+
+SVG-based rendering with these lanes:
+
+| Lane | Y Position | Description |
+|---|---|---|
+| Word Track | 0–48 | Words positioned by start time, current word highlighted blue |
+| Pitch | 52–158 | Smooth polyline, normalized 0→maxHz, vertical label "PITCH" |
+| Volume | 166–248 | Filled area chart, vertical label "VOLUME" |
+| Pause Regions | Full height | Semi-transparent red blocks |
+| Cursor | Full height | White vertical line at `currentTime` |
+
+- Responsive: fills container width, scrolls horizontally for long audio
+- Grid lines for reference
+- Time labels every 2 seconds
+- Auto-scroll follows current word during playback
+- Click anywhere to seek
+
+### Audio Playback
+- Browser `<Audio>` element from `URL.createObjectURL(file)`
+- `requestAnimationFrame` loop synchronizes cursor at ~60fps
+- Progress bar + play/pause button in toolbar
+
+### Recording
+- `MediaRecorder` with `getUserMedia({ audio: true })`
+- Auto-stops after `reference.duration + 500ms`
+- Preview via `<audio controls>`
+- Re-record supported
+
+### How to Run
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+## Component API
+
+### UploadZone
+```svelte
+<UploadZone onFile={(file: File) => void} />
+```
+Props: `onFile` — called when a file is selected or dropped.
+
+### Timeline
+```svelte
+<Timeline
+  reference={ReferenceData}
+  currentTime={number}
+  isPlaying={boolean}
+  onPlay={fn}
+  onPause={fn}
+  onSeek={(t: number) => void}
+/>
+```
+
+### ScoreCard
+```svelte
+<ScoreCard score={ScoreData} />
+```
+ScoreData: `{ overall: number, timing: number, pitch: number, rhythm: number, pacing: number }`
+
+---
+
+## Key Types (`types.ts`)
+
+```typescript
+interface Word { word: string; start: number; end: number }
+interface PauseRegion { start: number; end: number }
+interface ReferenceData {
+  words: Word[]; times: number[]; rms: number[]; pitch: number[];
+  pause_mask: boolean[]; pause_regions: PauseRegion[]; cps: number[];
+  duration: number; sample_rate: number;
+}
+interface ScoreData {
+  overall: number; timing: number; pitch: number; rhythm: number; pacing: number;
+}
+```
+
+---
+
+## Design Constraints
+- No authentication
+- No SSR complexity
+- No WebSockets (yet)
+- Single-page application only
+- Backend returns clean JSON (no embedded graphs)
+- CUDA required, no silent CPU fallback
+- Matplotlib removed from API flow
+- Gradio removed entirely
