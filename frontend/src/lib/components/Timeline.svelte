@@ -73,6 +73,12 @@
 		}).join(' ');
 	}
 
+	let viewBox = $derived(`0 0 ${svgWidth} ${svgHeight}`);
+
+	let volPts = $derived(generatePoints(reference.times, reference.rms, maxRms, CONFIG.VOL.top, CONFIG.VOL.bottom));
+
+	let cursorX = $derived(timeToX(currentTime));
+
 	// --- Effects ---
 	let raf: number;
 	$effect(() => {
@@ -118,7 +124,7 @@
 </script>
 
 <!-- Snippet: Y-Axis Labels -->
-{#snippet axisLabels(top, bottom, max, color, formatter)}
+{#snippet axisLabels(top: number, bottom: number, max: number, color: string, formatter: (v: number) => string)}
 	{#each [0, 0.5, 1] as frac}
 		{@const y = bottom - frac * (bottom - top)}
 		<line x1={CONFIG.LEFT_MARGIN} y1={y} x2={svgWidth} y2={y} stroke="white" stroke-width="0.5" opacity="0.1" stroke-dasharray="4" />
@@ -171,8 +177,8 @@
 				<rect x={CONFIG.LEFT_MARGIN} y={CONFIG.VOL.top} width={contentWidth} height={CONFIG.VOL.bottom - CONFIG.VOL.top} fill="#81c784" opacity="0.02" />
 
 				<!-- Y-Axis Guides -->
-				{@render axisLabels(CONFIG.PITCH.top, CONFIG.PITCH.bottom, maxPitch, CONFIG.PITCH.color, (v) => v.toFixed(0))}
-				{@render axisLabels(CONFIG.VOL.top, CONFIG.VOL.bottom, maxRms, CONFIG.VOL.color, (v) => v.toFixed(2))}
+				{@render axisLabels(CONFIG.PITCH.top, CONFIG.PITCH.bottom, maxPitch, CONFIG.PITCH.color, (v: number) => v.toFixed(0))}
+				{@render axisLabels(CONFIG.VOL.top, CONFIG.VOL.bottom, maxRms, CONFIG.VOL.color, (v: number) => v.toFixed(2))}
 
 				<!-- Words Lane rendering -->
 				{#each reference.words as word, i}
@@ -201,7 +207,6 @@
 				/>
 
 				<!-- Master Volume Path -->
-				{@const volPts = generatePoints(reference.times, reference.rms, maxRms, CONFIG.VOL.top, CONFIG.VOL.bottom)}
 				{#if volPts}
 					<path d="M {CONFIG.LEFT_MARGIN} {CONFIG.VOL.bottom} L {volPts} L {timeToX(reference.duration)} {CONFIG.VOL.bottom} Z" fill={CONFIG.VOL.color} opacity="0.1" />
 					<polyline points={volPts} fill="none" stroke={CONFIG.VOL.color} stroke-width="1.5" opacity="0.7" />
@@ -232,7 +237,6 @@
 				{/if}
 
 				<!-- Playhead Cursor -->
-				{@const cursorX = timeToX(currentTime)}
 				<g class="cursor">
 					<line x1={cursorX} y1="0" x2={cursorX} y2={svgHeight} stroke="#fff" stroke-width="2" />
 					<circle cx={cursorX} cy="0" r="4" fill="#fff" />
