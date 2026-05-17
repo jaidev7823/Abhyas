@@ -60,17 +60,29 @@
 	let containerWidth = $state(0);
 	let comparisonMode: 'stacked' | 'overlap' = $state('stacked');
 
-	$effect(() => {
-		if (!containerEl) return;
-		const ro = new ResizeObserver((entries) => {
-			containerWidth = entries[0].contentRect.width;
-		});
-		ro.observe(containerEl);
-		return () => ro.disconnect();
-	});
+  let raf: number;
+  
+  $effect(() => {
+  	if (!containerEl || !isPlaying) return;
+  
+  	const scrollEl = containerEl;
+  
+  	const updateScroll = () => {
+  		const cursorPos = LEFT_MARGIN + currentTime * PX_PER_SEC;
+  		const target = cursorPos - scrollEl.clientWidth * 0.4;
+  
+  		scrollEl.scrollLeft += (target - scrollEl.scrollLeft) * 0.15;
+  
+  		raf = requestAnimationFrame(updateScroll);
+  	};
+  
+  	raf = requestAnimationFrame(updateScroll);
+  
+  	return () => cancelAnimationFrame(raf);
+  });
 
 	let maxDuration = $derived(Math.max(reference.duration, comparisonReference?.duration ?? 0));
-	let contentWidth = $derived(Math.max(500, maxDuration * PX_PER_SEC));
+	let contentWidth = $derived(Math.max(1, maxDuration * PX_PER_SEC));
 	let svgWidth = $derived(contentWidth + LEFT_MARGIN);
 	let renderWidth = $derived(Math.max(containerWidth || 0, svgWidth));
 	let svgHeight = $derived(comparisonReference && comparisonMode === 'stacked' ? COMP_TOP + COMP_HEIGHT : MASTER_HEIGHT);
