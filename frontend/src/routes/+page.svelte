@@ -257,27 +257,55 @@
 			loading = false;
 		}
 	}
+// Add these new state variables at the top of your state declarations
+    let audioDevices = $state<MediaDeviceInfo[]>([]);
+    let selectedDeviceId = $state<string>('');
 
-	async function startRecording() {
-		if (!activeReference) return;
-		let stream: MediaStream | null = null;
-		let recorder: MediaRecorder | null = null;
-		try {
-			if (recordedUrl) URL.revokeObjectURL(recordedUrl);
-			recordedBlob = null;
-			recordedUrl = null;
-			score = null;
-			attemptReference = null;
+    // Call this when the component mounts or when step === 'upload' finishes
+    async function loadMicrophones() {
+        try {
+            // We request generic permission first, otherwise device labels will be blank strings
+            await navigator.mediaDevices.getUserMedia({ audio: true });
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            audioDevices = devices.filter(device => device.kind === 'audioinput');
+            
+            // Default to the first one if nothing is selected yet
+            if (audioDevices.length > 0 && !selectedDeviceId) {
+                selectedDeviceId = audioDevices[0].deviceId;
+            }
+        } catch (e) {
+            console.error('Failed to list microphones:', e);
+        }
+    }
 
-			stream = await navigator.mediaDevices.getUserMedia({
-				audio: {
-					echoCancellation: false,
-					noiseSuppression: false,
-					autoGainControl: true,
-					channelCount: 1,
-					sampleRate: 48000,
-				},
-			});
+    // Run this reactively when the user reaches the recording stage
+    $effect(() => {
+        if (reference) {
+            loadMicrophones();
+        }
+    });
+async function startRecording() {
+        if (!activeReference) return;
+        let stream: MediaStream | null = null;
+        let recorder: MediaRecorder | null = null;
+        try {
+            if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+            recordedBlob = null;
+            recordedUrl = null;
+            score = null;
+            attemptReference = null;
+
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    // CRITICAL CHANGE: Force the browser to use the chosen device
+                    deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    channelCount: 1,
+                    sampleRate: 48000,
+                },
+            });
 			const recorderOptions = getRecorderOptions();
 			recorder = new MediaRecorder(stream, recorderOptions);
 			const activeStream = stream;
@@ -487,6 +515,24 @@
 					Record Your Attempt
 				</h2>
 				<div class="recording-area">
+				<!-- NEW MIC SELECTOR DROPDOWN -->
+                    {#if audioDevices.length > 1 && !isRecording && !recordedBlob}
+                        <div class="mic-selector-row">
+                            <label for="mic-select" class="picker-label">Microphone</label>
+                            <select 
+                                id="mic-select" 
+                                class="sentence-select" 
+                                bind:value={selectedDeviceId}
+                            >
+                                {#each audioDevices as device, i}
+                                    <option value={device.deviceId}>
+                                        {device.label || `Microphone ${i + 1}`}
+                                    </option>
+                                {/each}
+                            </select>
+                        </div>
+                    {/if}
+
 					{#if !recordedBlob && !isRecording}
 						<button class="btn btn-record" onclick={startRecording}>
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -550,6 +596,13 @@
 </div>
 
 <style>
+.mic-selector-row {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 16px;
+    }
 	.app {
 		max-width: 1000px;
 		margin: 0 auto;
